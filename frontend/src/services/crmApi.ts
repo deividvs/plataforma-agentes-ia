@@ -343,6 +343,18 @@ export const crmApi = {
 
 // Serviços de Pipeline (vamos criar conforme necessário)
 export const pipelineApi = {
+  async createPipeline(name: string): Promise<Pipeline> {
+    const { companyId } = getAuthIds();
+    if (!companyId) {
+      throw new Error('Empresa não encontrada para criar pipeline');
+    }
+    const response = await api.post(`/api/pipelines?company_id=${companyId}`, {
+      name,
+      stages: [],
+    });
+    return response.data;
+  },
+
   // Obter todos os pipelines
   async getPipelines(): Promise<Pipeline[]> {
     try {

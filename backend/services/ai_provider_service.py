@@ -300,7 +300,7 @@ def validate_openai_api_key(
             client.responses.create(
                 model=REQUIRED_OPENAI_RUNTIME_MODEL,
                 input="Responda apenas OK.",
-                max_output_tokens=1,
+                max_output_tokens=16,
                 store=False,
             )
     except Exception as exc:

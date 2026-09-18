@@ -278,15 +278,15 @@ function buildFullPhone(countryDDI: string, phone: string): string {
 }
 
 // Mapear backend lead para frontend lead
-const mapBackendLeadToFrontend = (backendLead: BackendLead): Lead => {
+const mapBackendLeadToFrontend = (backendLead: BackendLead, firstStageId?: number | null): Lead => {
   const tag = isNewLead(backendLead.created_at || '') ? 'NOVO' : '';
   const operationalDate = backendLead.data_entrada || backendLead.created_at || '';
 
   // Se não tiver current_stage_id, é um novo lead
   // Se tiver, mantém no estágio atual
-  const columnId = backendLead.current_stage_id
-    ? backendLead.current_stage_id.toString()
-    : 'novo_lead';
+  const columnId = !backendLead.current_stage_id || backendLead.current_stage_id === firstStageId
+    ? 'novo_lead'
+    : backendLead.current_stage_id.toString();
 
   return {
     id: backendLead.id,
@@ -311,6 +311,7 @@ export default function CRMv4() {
   // --- Estados ---
   const [columns, setColumns] = useState<Column[]>([]);
   const [leads, setLeads] = useState<Lead[]>([]);
+  const firstStageIdRef = useRef<number | null>(null);
   const [isEditingPipeline, setIsEditingPipeline] = useState(false);
   const [newColumnName, setNewColumnName] = useState('');
   const [newColumnColor, setNewColumnColor] = useState('#020323');
@@ -594,7 +595,7 @@ export default function CRMv4() {
         }
 
         // 3. Mapear leads para frontend incluindo nextTask e consulta_data
-        const frontendLeads = backendLeads.map(mapBackendLeadToFrontend).map(lead => {
+        const frontendLeads = backendLeads.map(lead => mapBackendLeadToFrontend(lead, firstStageIdRef.current)).map(lead => {
           const normalizedLeadPhone = lead.phone.replace(/\D/g, '').slice(-11);
           const agendamento = agendamentosMap[normalizedLeadPhone];
           return {
@@ -622,9 +623,21 @@ export default function CRMv4() {
               // Buscar estágios do pipeline
               const stages = await pipelineApi.getStages(pipelineId);
               if (stages && stages.length > 0) {
+                const firstStage = stages.find(stage => stage.is_first_stage);
+                if (firstStage) {
+                  firstStageIdRef.current = firstStage.id;
+                  setLeads(current => current.map(lead =>
+                    lead.currentStageId === firstStage.id ? { ...lead, columnId: 'novo_lead' } : lead
+                  ));
+                  allColumns = allColumns.map(column =>
+                    column.id === 'novo_lead'
+                      ? { ...column, stageId: firstStage.id, pipelineId }
+                      : column
+                  );
+                }
                 // Filtrar estágios que não são colunas padrão
                 const customStages = stages
-                  .filter(stage => !COLUNAS_PADRAO.some(col => col.id === stage.id.toString()))
+                  .filter(stage => !stage.is_first_stage && !stage.is_converted_stage && !stage.is_lost_stage)
                   .map(stage => ({
                     id: stage.id.toString(),
                     title: stage.name,
@@ -816,8 +829,8 @@ export default function CRMv4() {
   };
 
   const getPercentageBaseLabel = (stageId?: number | null) => {
-    if (!stageId) return 'Leads';
-    return columns.find(column => column.stageId === stageId)?.title || 'Leads';
+    if (!stageId) return 'Novo Lead';
+    return columns.find(column => column.stageId === stageId)?.title || 'Novo Lead';
   };
 
   const addColumn = async () => {
@@ -830,18 +843,16 @@ export default function CRMv4() {
         throw new Error('IDs de cliente ou empresa não encontrados');
       }
 
-      // Primeiro, buscar ou criar um pipeline para esta empresa
-      let pipelineId = 1; // Default
-      try {
-        const pipelines = await pipelineApi.getPipelines();
-        if (pipelines && pipelines.length > 0) {
-          pipelineId = pipelines[0].id;
-        } else {
-          console.warn('Nenhum pipeline encontrado, usando ID padrão');
-        }
-      } catch (e) {
-        console.warn('Falha ao carregar pipelines, usando ID padrão', e);
-      }
+      const pipelines = await pipelineApi.getPipelines();
+      const pipeline = pipelines[0] ?? await pipelineApi.createPipeline('Pipeline de Vendas');
+      const pipelineId = pipeline.id;
+      const firstStage = pipeline.stages?.find(stage => stage.is_first_stage);
+      if (firstStage) firstStageIdRef.current = firstStage.id;
+      const currentColumns = columns.map(column =>
+        column.id === 'novo_lead' && firstStage
+          ? { ...column, stageId: firstStage.id, pipelineId }
+          : column
+      );
 
       // Criar nova etapa no backend
       const newStage = await pipelineApi.createStage(pipelineId, {
@@ -854,12 +865,12 @@ export default function CRMv4() {
       });
 
       // Encontrar colunas convertidas ou perdidas para inserir antes delas
-      const convertedLostIndex = columns.findIndex(col =>
+      const convertedLostIndex = currentColumns.findIndex(col =>
         col.title?.toLowerCase().includes('ganhou') ||
         col.title?.toLowerCase().includes('perdido')
       );
 
-      let finalColumns = [...columns];
+      let finalColumns = [...currentColumns];
       const newCol: Column = {
         id: newStage.id.toString(),
         title: newStage.name,
@@ -1070,7 +1081,7 @@ export default function CRMv4() {
         }
 
         const convertedLead = await crmApi.getLead(convertedLeadId);
-        const mappedLead = mapBackendLeadToFrontend(convertedLead);
+        const mappedLead = mapBackendLeadToFrontend(convertedLead, firstStageIdRef.current);
         const leadWithColumn = {
           ...mappedLead,
           columnId: mappedLead.columnId || 'novo_lead',
@@ -1134,7 +1145,7 @@ export default function CRMv4() {
           current_stage_id: updated.current_stage_id,
           pipeline_id: updated.pipeline_id
         };
-        const mappedLead = mapBackendLeadToFrontend(backendLead);
+        const mappedLead = mapBackendLeadToFrontend(backendLead, firstStageIdRef.current);
 
         setLeads(leads.map(l => l.id === editingLeadId ? mappedLead : l));
         showNotification('success', 'Lead atualizado com sucesso');
@@ -1156,7 +1167,7 @@ export default function CRMv4() {
           sender_lid: novo.sender_lid,
           follow_up_sequence_id: novo.follow_up_sequence_id
         };
-        const mappedLead = mapBackendLeadToFrontend(backendLead);
+        const mappedLead = mapBackendLeadToFrontend(backendLead, firstStageIdRef.current);
 
         // Adicionar novo lead à coluna "Novo Lead"
         const newLeadWithColumn = {
@@ -1272,7 +1283,7 @@ export default function CRMv4() {
         current_stage_id: updated.current_stage_id,
         pipeline_id: updated.pipeline_id
       };
-      const mappedLead = mapBackendLeadToFrontend(backendLead);
+      const mappedLead = mapBackendLeadToFrontend(backendLead, firstStageIdRef.current);
 
       setLeads(leads.map(l => l.id === selectedLead.id ? mappedLead : l));
       setShowEditModal(false);
@@ -1387,13 +1398,18 @@ export default function CRMv4() {
         // Movimentação com persistência para colunas especiais (Ganhou/Perdido)
         let targetStageId = 0;
 
-        // Para "Novo Lead", manter stageId = 0
+        // "Lead" e "Novo Lead" são a mesma primeira etapa persistida no banco.
         if (destColId === 'novo_lead') {
+          if (!destColumn.stageId) {
+            throw new Error('Etapa inicial do pipeline não encontrada');
+          }
+          const userId = parseInt(localStorage.getItem('user_id') || sessionStorage.getItem('user_id') || '0', 10);
+          await retryMove(cardId, destColumn.stageId, userId || 0, 'Movido para Novo Lead via drag & drop');
           setLeads(prev => prev.map(lead =>
             lead.id === cardId ? {
               ...lead,
               columnId: destColId,
-              currentStageId: 0,
+              currentStageId: destColumn.stageId,
               isMoving: false
             } : lead
           ));
@@ -1539,7 +1555,7 @@ export default function CRMv4() {
 
         // 1. Carregar Leads da tabela leads
         const backendLeads = await crmApi.getLeads();
-        const frontendLeads = backendLeads.map(mapBackendLeadToFrontend);
+        const frontendLeads = backendLeads.map(lead => mapBackendLeadToFrontend(lead, firstStageIdRef.current));
         setLeads(frontendLeads);
 
         // 2. Criar colunas: padrão + estágios reais do banco
@@ -1556,9 +1572,21 @@ export default function CRMv4() {
               // Buscar estágios do pipeline
               const stages = await pipelineApi.getStages(pipelineId);
               if (stages && stages.length > 0) {
+                const firstStage = stages.find(stage => stage.is_first_stage);
+                if (firstStage) {
+                  firstStageIdRef.current = firstStage.id;
+                  setLeads(current => current.map(lead =>
+                    lead.currentStageId === firstStage.id ? { ...lead, columnId: 'novo_lead' } : lead
+                  ));
+                  allColumns = allColumns.map(column =>
+                    column.id === 'novo_lead'
+                      ? { ...column, stageId: firstStage.id, pipelineId }
+                      : column
+                  );
+                }
                 // Filtrar estágios que não são colunas padrão
                 const customStages = stages
-                  .filter(stage => !COLUNAS_PADRAO.some(col => col.id === stage.id.toString()))
+                  .filter(stage => !stage.is_first_stage && !stage.is_converted_stage && !stage.is_lost_stage)
                   .map(stage => ({
                     id: stage.id.toString(),
                     title: stage.name,
@@ -1711,6 +1739,7 @@ export default function CRMv4() {
               className={isEditingPipeline ? crmModernPrimaryButtonClass() : crmModernSecondaryButtonClass(isDark)}
               onClick={() => {
                 if (!isEditingPipeline) {
+                  setViewMode('board');
                   setNewColumnName('');
                   setNewColumnColor('#020323');
                   setNewColumnPercentageBaseStageId('');
@@ -1808,7 +1837,7 @@ export default function CRMv4() {
                     onChange={(event) => setEditStagePercentageBaseStageId(event.target.value)}
                     className={crmModernInputClass(isDark)}
                   >
-                    <option value="">Leads</option>
+                    <option value="">Novo Lead</option>
                     {editStageBaseOptions.map(option => (
                       <option key={option.id} value={option.stageId}>
                         {option.title}
@@ -1854,7 +1883,9 @@ export default function CRMv4() {
           <DragDropContext onDragEnd={handleDragEnd} onDragStart={handleDragStart}>
           <div className="crm-board-grid flex h-full min-w-max gap-4">
             {columns.map((column, index) => {
-              const showAddStageBefore = isEditingPipeline && index === firstTerminalIndex;
+              const showAddStageBefore = isEditingPipeline && (
+                index === firstTerminalIndex || (firstTerminalIndex === -1 && index === columns.length - 1)
+              );
               const columnLeads = sortLeadsByEntryRecency(
                 filteredLeads.filter(lead => lead.columnId === column.id),
               );
@@ -1862,7 +1893,10 @@ export default function CRMv4() {
               return (
                 <React.Fragment key={column.id}>
                   {showAddStageBefore && (
-                    <div className="crm-pipeline-add-stage flex w-[calc(100vw-3.5rem)] max-w-72 shrink-0 flex-col sm:w-[288px] sm:max-w-none">
+                    <div
+                      className="crm-pipeline-add-stage flex w-[calc(100vw-3.5rem)] max-w-72 shrink-0 flex-col sm:w-[288px] sm:max-w-none"
+                      style={firstTerminalIndex === -1 ? { order: 999 } : undefined}
+                    >
                       <div className="crm-add-stage">
                         <div className="crm-add-stage__header">
                           <div>
@@ -1902,7 +1936,7 @@ export default function CRMv4() {
                               onChange={(event) => setNewColumnPercentageBaseStageId(event.target.value)}
                               className={crmModernInputClass(isDark)}
                             >
-                              <option value="">Leads</option>
+                              <option value="">Novo Lead</option>
                               {getPercentageBaseOptions().map(option => (
                                 <option key={option.id} value={option.stageId}>
                                   {option.title}

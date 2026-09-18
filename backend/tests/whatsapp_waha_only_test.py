@@ -311,6 +311,33 @@ def test_normalize_waha_from_me_app_message_keeps_external_origin():
     assert normalized["text"]["message"] == "Mensagem enviada pelo celular"
 
 
+def test_normalize_waha_noweb_lid_uses_remote_jid_alt_phone(monkeypatch):
+    def unexpected_lookup(*args, **kwargs):
+        raise AssertionError("O telefone já veio no webhook; não consulte o resolvedor LID")
+
+    monkeypatch.setattr(
+        "backend.integrations.waha_sdk.get_client", unexpected_lookup
+    )
+    normalized = normalize_waha_payload({
+        "event": "message",
+        "session": "sessao-teste",
+        "payload": {
+            "id": "false_201825445744834@lid_TEST",
+            "from": "201825445744834@lid",
+            "fromMe": False,
+            "body": "oi",
+            "_data": {"key": {
+                "remoteJid": "201825445744834@lid",
+                "remoteJidAlt": "5500000000004@s.whatsapp.net",
+                "addressingMode": "lid",
+            }},
+        },
+    })
+
+    assert normalized["phone"] == "5500000000004"
+    assert normalized["reply_to_chat_id"] == "201825445744834@lid"
+
+
 def test_normalize_waha_text_uses_conversation_fallback_when_body_is_empty():
     normalized = normalize_waha_payload({
         "event": "message.any",

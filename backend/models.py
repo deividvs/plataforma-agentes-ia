@@ -228,9 +228,15 @@ class Contact(Base):
     phone = Column(String(20), nullable=False)
     name = Column(String(255))
     photo = Column(Text)
+    sender_lid = Column(String(255), nullable=True)
+    source_id = Column(String(255), nullable=True)
+    thumbnail_url = Column(Text, nullable=True)
+    last_message_at = Column(TIMESTAMP(timezone=True), nullable=True)
+    unread_count = Column(Integer, nullable=False, server_default="0")
+    archived = Column(Boolean, nullable=False, server_default="false")
 
     # Nova coluna para indicar se o contato está em modo humano (True) ou modo IA (False)
-    human_mode = Column(Boolean, default=False, nullable=False)
+    human_mode = Column(Boolean, default=False, server_default="false", nullable=False)
 
     client = relationship("Client", back_populates="contacts")
     company = relationship("Company", foreign_keys=[company_id])
@@ -240,6 +246,7 @@ class Contact(Base):
 
     __table_args__ = (
         UniqueConstraint('client_id', 'phone', name='uq_contact_client_phone'),
+        UniqueConstraint('client_id', 'company_id', 'phone', name='uq_contact_client_company_phone'),
     )
 
 
@@ -2127,4 +2134,31 @@ class WhatsAppCampaignExecution(Base):
         Index('idx_whatsapp_campaign_exec_contact', 'contact_id'),
         Index('idx_whatsapp_campaign_exec_status', 'status'),
         UniqueConstraint('campaign_id', 'contact_id', name='uq_whatsapp_campaign_contact'),
+    )
+
+
+class WebhookAudit(Base):
+    """Persist webhook delivery and processing status for WAHA messages."""
+
+    __tablename__ = "webhook_audit"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    instance_id = Column(String(255), nullable=False)
+    company_id = Column(BigInteger, nullable=True)
+    message_id = Column(String(255), nullable=False, server_default="")
+    phone = Column(String(100), nullable=False, server_default="")
+    message_type = Column(String(100), nullable=False)
+    message_data = Column(Text, nullable=False)
+    status = Column(String(50), nullable=False, server_default="received")
+    processing_status = Column(String(50), nullable=True)
+    task_id = Column(String(255), nullable=True)
+    error_message = Column(Text, nullable=True)
+    retry_count = Column(Integer, nullable=False, server_default="0")
+    created_at = Column(TIMESTAMP(timezone=True), nullable=False, server_default=func.now())
+    updated_at = Column(TIMESTAMP(timezone=True), nullable=False, server_default=func.now())
+    processed_at = Column(TIMESTAMP(timezone=True), nullable=True)
+
+    __table_args__ = (
+        Index("idx_webhook_audit_dedupe", "company_id", "message_id", "message_type", "created_at"),
+        Index("idx_webhook_audit_status_created", "status", "created_at"),
     )

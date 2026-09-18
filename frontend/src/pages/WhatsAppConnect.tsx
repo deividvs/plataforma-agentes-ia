@@ -619,6 +619,7 @@ const WhatsAppConnectPage: React.FC = () => {
           setStatusData({ ...status, connected: true }); // Force new object reference
           setQrcodeBase64(''); // Limpar QR code
           setQrAttempts(0); // Resetar tentativas
+          setError(''); // Um erro transitório de QR não deve permanecer após conectar
           setMessage('✅ WhatsApp conectado com sucesso!');
 
           // Buscar dados do device
@@ -688,6 +689,7 @@ const WhatsAppConnectPage: React.FC = () => {
           // Limpar QR Code quando conectado
           setQrcodeBase64('');
           setQrAttempts(0);
+          setError('');
 
           console.log('✅ WhatsApp conectado com sucesso!');
         } else {

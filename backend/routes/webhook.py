@@ -1587,6 +1587,19 @@ def get_contacts(
     print(f"🔍 CHECKPOINT: Filtros de funil: {funnel_stages}")
     print(f"🔍 CHECKPOINT: Filtros de fluxo: {active_flows}")
 
+    installed_tables = set(db.execute(text("""
+        SELECT table_name FROM information_schema.tables
+        WHERE table_schema = current_schema()
+    """)).scalars())
+
+    optional_progress = (
+        ("Follow-up", "follow_up_progress", {"follow_up_executions", "follow_up_steps"}),
+        ("Confirmation", "confirmation_progress", {"confirmation_executions", "confirmation_steps"}),
+        ("No-show", "noshow_progress", {"noshow_follow_up_executions", "noshow_follow_up_steps"}),
+        ("Pós-consulta", "pos_consulta_progress", {"pos_consulta_executions", "pos_consulta_steps"}),
+        ("Pós-venda", "pos_venda_progress", {"pos_venda_executions", "pos_venda_steps"}),
+    )
+
     def build_contacts_query(base_conditions: str, additional_filters: str = "", team_filter: str = "") -> str:
         """Constrói a query base de contatos com filtros aplicados"""
         search_filter = ""
@@ -1608,7 +1621,7 @@ def get_contacts(
         if history_only:
              history_filter = " AND c.last_message_at IS NOT NULL"
 
-        return f"""
+        query = f"""
             SELECT
                 c.id,
                 c.phone,
@@ -1860,6 +1873,16 @@ def get_contacts(
             LIMIT :limit OFFSET :offset
         """
 
+        # Algumas instalações não têm os módulos legados de cadência. A lista
+        # de contatos continua disponível, com progresso nulo nesses módulos.
+        for label, alias, required_tables in optional_progress:
+            if required_tables.issubset(installed_tables):
+                continue
+            start = query.index(f"-- Flow Progress: {label}")
+            end = query.index(f"as {alias}", start) + len(f"as {alias}")
+            query = query[:start] + f"NULL::json as {alias}" + query[end:]
+        return query
+
     # Preparar parâmetros da query
     query_params = {
         "limit": limit,
@@ -2062,7 +2085,7 @@ def get_contacts(
         # Criar condições para fluxos ativos
         flow_conditions = []
 
-        if "follow_up" in allowed_flows:
+        if "follow_up" in allowed_flows and "follow_up_executions" in installed_tables:
             flow_conditions.append("""
                 EXISTS (
                     SELECT 1 FROM follow_up_executions fe
@@ -2073,7 +2096,7 @@ def get_contacts(
                 )
             """)
 
-        if "confirmation" in allowed_flows:
+        if "confirmation" in allowed_flows and "confirmation_executions" in installed_tables:
             flow_conditions.append("""
                 EXISTS (
                     SELECT 1 FROM confirmation_executions ce
@@ -2085,7 +2108,7 @@ def get_contacts(
                 )
             """)
 
-        if "noshow" in allowed_flows:
+        if "noshow" in allowed_flows and "noshow_follow_up_executions" in installed_tables:
             flow_conditions.append("""
                 EXISTS (
                     SELECT 1 FROM noshow_follow_up_executions nfe
@@ -2096,7 +2119,7 @@ def get_contacts(
                 )
             """)
 
-        if "pos_consulta" in allowed_flows:
+        if "pos_consulta" in allowed_flows and "pos_consulta_executions" in installed_tables:
             flow_conditions.append("""
                 EXISTS (
                     SELECT 1 FROM pos_consulta_executions pce
@@ -2109,7 +2132,7 @@ def get_contacts(
                 )
             """)
 
-        if "pos_venda" in allowed_flows:
+        if "pos_venda" in allowed_flows and "pos_venda_executions" in installed_tables:
             flow_conditions.append("""
                 EXISTS (
                     SELECT 1 FROM pos_venda_executions pve
@@ -2122,6 +2145,9 @@ def get_contacts(
                       AND pve.status IN ('SCHEDULED', 'PROCESSING')
                 )
             """)
+
+        if not flow_conditions:
+            flow_conditions.append("FALSE")
 
         if flow_conditions:
             # Combinar com filtros de funil se existirem
@@ -2453,9 +2479,6 @@ def reset_whatsapp_config(user=Depends(get_current_user), db: Session = Depends(
             UPDATE companies
                SET zapi_instance_id = NULL,
                    zapi_token = NULL,
-                   wppconnect_session_name = NULL,
-                   wppconnect_secret_key = NULL,
-                   wppconnect_base_url = NULL,
                    waha_session_name = NULL,
                    waha_enabled = false
              WHERE id = :cid
@@ -2519,9 +2542,6 @@ def _persist_active_waha_configuration(
             UPDATE companies
                SET zapi_instance_id = NULL,
                    zapi_token = NULL,
-                   wppconnect_session_name = NULL,
-                   wppconnect_secret_key = NULL,
-                   wppconnect_base_url = NULL,
                    waha_session_name = :session_name,
                    waha_enabled = true
              WHERE id = :cid
@@ -3092,6 +3112,8 @@ def get_whatsapp_qrcode(user=Depends(get_current_user), db: Session = Depends(ge
                     )
                 raise HTTPException(status_code=500, detail=f"Erro ao obter QR Code WAHA: {str(e)}")
 
+        except HTTPException:
+            raise
         except Exception as e:
             logger.error(f"[WhatsApp QRCode] Erro ao obter QR Code WAHA: {type(e).__name__}: {e}", exc_info=True)
             raise HTTPException(status_code=500, detail=f"Erro interno ao obter QR Code WAHA: {str(e)}")

@@ -567,6 +567,8 @@ def normalize_waha_payload(waha_data: Dict[str, Any]) -> Dict[str, Any]:
     # _data.Info.SenderAlt contém o telefone real: "5500000000004:96@s.whatsapp.net"
     # from contém o chat para responder: "000000000000002@lid" (ID oculto)
     sender_alt = payload.get("_data", {}).get("Info", {}).get("SenderAlt", "")
+    # NOWEB informa o telefone alternativo aqui quando "from" usa um LID.
+    remote_jid_alt = payload.get("_data", {}).get("key", {}).get("remoteJidAlt", "")
     from_field = payload.get("from", "")
     to_field = payload.get("to", "")
     from_me = payload.get("fromMe", False)
@@ -580,6 +582,8 @@ def normalize_waha_payload(waha_data: Dict[str, Any]) -> Dict[str, Any]:
     elif sender_alt and "@s.whatsapp.net" in sender_alt:
         # Remove ":96@s.whatsapp.net" para pegar apenas o telefone
         phone = sender_alt.split(":")[0] if ":" in sender_alt else sender_alt.split("@")[0]
+    elif "@lid" in from_field and remote_jid_alt.endswith("@s.whatsapp.net"):
+        phone = _clean_waha_chat_id(remote_jid_alt).split(":")[0]
     elif payload.get("author"):
         # Fallback: usar author (para grupos)
         phone = _clean_waha_chat_id(payload["author"])
@@ -2926,6 +2930,7 @@ def process_incoming_waha_message(self, task_data: Dict[str, Any]):
         raise
     except Exception as e:
         logger.exception(f"[WAHA Task] Erro ao processar mensagem: {e}")
+        db.rollback()
 
         # Atualizar status auditoria
         if audit_id:

@@ -1,5 +1,6 @@
 import os
 import logging
+import re
 from sqlalchemy import create_engine, event, text
 from sqlalchemy.orm import Session, sessionmaker, declarative_base
 from sqlalchemy.pool import Pool
@@ -9,6 +10,9 @@ from typing import Generator
 DATABASE_URL = os.getenv("DATABASE_URL")
 if not DATABASE_URL:
     raise ValueError("DATABASE_URL environment variable is required!")
+DATABASE_SCHEMA = os.getenv("DATABASE_SCHEMA", "cdc_agentes")
+if DATABASE_SCHEMA and not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", DATABASE_SCHEMA):
+    raise ValueError("DATABASE_SCHEMA must be a simple PostgreSQL schema name")
 
 # Parâmetros de pool — todos lidos do ambiente, com defaults
 POOL_SIZE        = int(os.getenv("DB_POOL_SIZE", "50"))
@@ -33,6 +37,8 @@ if "postgresql" in DATABASE_URL:
         "keepalives_interval": 10,
         "keepalives_count": 5,
     }
+    if os.getenv("PGSSLMODE"):
+        connect_args["sslmode"] = os.getenv("PGSSLMODE")
 elif "sqlite" in DATABASE_URL:
     connect_args = {
         "check_same_thread": False
@@ -49,6 +55,16 @@ engine = create_engine(
 )
 
 logger = logging.getLogger(__name__)
+
+
+@event.listens_for(engine, "begin")
+def set_postgres_search_path(connection):
+    if "postgresql" not in DATABASE_URL or not DATABASE_SCHEMA:
+        return
+    # Supabase's transaction pooler can change the server connection after a
+    # commit. SET LOCAL keeps the schema correct for every new transaction.
+    connection.exec_driver_sql(f'SET LOCAL search_path TO "{DATABASE_SCHEMA}"')
+
 
 # Event listeners para monitorar conexões
 @event.listens_for(Pool, "connect")

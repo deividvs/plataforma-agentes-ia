@@ -2,7 +2,8 @@ import sys
 from logging.config import fileConfig
 from pathlib import Path
 
-from sqlalchemy import engine_from_config
+from sqlalchemy import engine_from_config, event
+from sqlalchemy import text
 from sqlalchemy import pool
 from alembic import context
 
@@ -15,7 +16,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 # mantém modelos no Base principal e um pequeno conjunto legado do Agents SDK
 # em outro Base; ambos fazem parte do schema público suportado.
 from backend.config import DATABASE_URL
-from backend.db import Base
+from backend.db import Base, DATABASE_SCHEMA
 import backend.models  # noqa: F401
 import backend.prompt.agents_sdk.models.memory_models  # noqa: F401
 from backend.agents_sdk.database.models import Base as AgentsSDKBase
@@ -93,7 +94,18 @@ def run_migrations_online() -> None:
         poolclass=pool.NullPool,
     )
 
+    @event.listens_for(connectable, "begin")
+    def set_migration_search_path(connection):
+        if connection.dialect.name == "postgresql":
+            connection.exec_driver_sql(
+                f'SET LOCAL search_path TO "{DATABASE_SCHEMA}"'
+            )
+
     with connectable.connect() as connection:
+        if connection.dialect.name == "postgresql":
+            connection.execute(text(f"CREATE SCHEMA IF NOT EXISTS {DATABASE_SCHEMA}"))
+            connection.commit()
+
         context.configure(
             connection=connection,
             target_metadata=target_metadata,

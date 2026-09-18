@@ -154,6 +154,7 @@ const Dashboard: React.FC = () => {
   const [stages, setStages] = useState<PipelineStage[]>([]);
   const [stageMetrics, setStageMetrics] = useState<Record<number, number>>({});
   const [stageReachMetrics, setStageReachMetrics] = useState<Record<number, number>>({});
+  const [stageConversionMetrics, setStageConversionMetrics] = useState<Record<number, number>>({});
 
   const [companyName, setCompanyName] = useState('Empresa');
   const [companyLogo, setCompanyLogo] = useState<string | null>(null);
@@ -282,12 +283,7 @@ const Dashboard: React.FC = () => {
       leads.forEach((lead) => {
         const currentStageId = lead.current_stage_id;
         if (!currentStageId || !stageIds.has(currentStageId)) return;
-        if (!matchesSourceFilter(lead)) return;
-
-        const stageDateStr = getLeadStageDate(lead);
-        if (!stageDateStr) return;
-
-        if (isDateWithinSelectedRange(stageDateStr)) {
+        if (scopedLeadIds.has(lead.id)) {
           metricsByStage[currentStageId]++;
         }
       });
@@ -343,6 +339,8 @@ const Dashboard: React.FC = () => {
         if (!lead) return;
 
         let effectivePath: number[] = [];
+        const firstStage = pipelineStages.find((stage) => stage.is_first_stage) || pipelineStages[0];
+        if (firstStage) addStageToPath(effectivePath, firstStage.id);
         const leadEvents = (historyByLeadId.get(leadId) || []).sort((first, second) => {
           const firstTime = new Date(first.moved_at).getTime();
           const secondTime = new Date(second.moved_at).getTime();
@@ -365,12 +363,20 @@ const Dashboard: React.FC = () => {
       });
 
       const reachMetricsByStage: Record<number, number> = {};
+      const conversionMetricsByStage: Record<number, number> = {};
       pipelineStages.forEach((stage) => {
         reachMetricsByStage[stage.id] = reachedLeadIdsByStage[stage.id].size;
+        const baseLeadIds = stage.percentage_base_stage_id
+          ? reachedLeadIdsByStage[stage.percentage_base_stage_id]
+          : scopedLeadIds;
+        conversionMetricsByStage[stage.id] = baseLeadIds
+          ? [...reachedLeadIdsByStage[stage.id]].filter((leadId) => baseLeadIds.has(leadId)).length
+          : 0;
       });
 
       setStageMetrics(metricsByStage);
       setStageReachMetrics(reachMetricsByStage);
+      setStageConversionMetrics(conversionMetricsByStage);
 
       const [funnelData, timelineData, projections, timeBetween, funnelMain, dailyData] = await Promise.all([
         getFunnelBySource(companyId, dateRange.startDate, dateRange.endDate, mediaFilters.fonte || undefined),
@@ -468,7 +474,7 @@ const Dashboard: React.FC = () => {
                 </div>
               </div>
               <div style="display:grid;gap:10px;margin-top:6px;">
-                ${stageRowsForShare(stats, stages, stageMetrics, stageReachMetrics).slice(0, 5).map((stage) => `
+                ${stageRowsForShare(stats, stages, stageMetrics, stageReachMetrics, stageConversionMetrics).slice(0, 5).map((stage) => `
                   <div style="display:flex;justify-content:space-between;gap:14px;border-bottom:1px solid rgba(2,3,35,.08);padding-bottom:10px;">
                     <span style="font-size:13px;color:rgba(2,3,35,.68);">${escapeHtml(stage.name)}</span>
                     <strong style="font-size:13px;">${stage.count.toLocaleString('pt-BR')}</strong>
@@ -538,7 +544,7 @@ const Dashboard: React.FC = () => {
       const reachedCount = stageReachMetrics[stage.id] || 0;
       const percentageBaseStageId = stage.percentage_base_stage_id ?? null;
       const percentageBaseCount = percentageBaseStageId ? (stageReachMetrics[percentageBaseStageId] || 0) : stats.totalLeads;
-      const percentage = percentageBaseCount > 0 ? (reachedCount / percentageBaseCount) * 100 : 0;
+      const percentage = percentageBaseCount > 0 ? ((stageConversionMetrics[stage.id] || 0) / percentageBaseCount) * 100 : 0;
       const percentageBaseLabel = percentageBaseStageId
         ? stages.find((baseStage) => baseStage.id === percentageBaseStageId)?.name || 'Leads'
         : 'Leads';
@@ -553,7 +559,7 @@ const Dashboard: React.FC = () => {
         reachedCount,
       };
     });
-  }, [stageMetrics, stageReachMetrics, stages, stats]);
+  }, [stageMetrics, stageReachMetrics, stageConversionMetrics, stages, stats]);
 
   const dashboardVariant = readDashboardVariant();
 
@@ -699,13 +705,14 @@ function stageRowsForShare(
   stages: PipelineStage[],
   stageMetrics: Record<number, number>,
   stageReachMetrics: Record<number, number>,
+  stageConversionMetrics: Record<number, number>,
 ) {
   return stages.map((stage, index) => {
     const count = stageMetrics[stage.id] || 0;
     const reachedCount = stageReachMetrics[stage.id] || 0;
     const percentageBaseStageId = stage.percentage_base_stage_id ?? null;
     const percentageBaseCount = percentageBaseStageId ? (stageReachMetrics[percentageBaseStageId] || 0) : stats.totalLeads;
-    const percentage = percentageBaseCount > 0 ? (reachedCount / percentageBaseCount) * 100 : 0;
+    const percentage = percentageBaseCount > 0 ? ((stageConversionMetrics[stage.id] || 0) / percentageBaseCount) * 100 : 0;
 
     return {
       color: getStageAccentColor(stage, index),

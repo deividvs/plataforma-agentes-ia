@@ -478,19 +478,15 @@ const ModernDashboard: React.FC<ModernDashboardProps> = ({
             <div className="modern-panel-head">
               <div>
                 <h2>Funil de conversão</h2>
-                <p>Volume atual e avanço por etapa.</p>
+                <p>Leads que alcançaram cada etapa no período.</p>
               </div>
             </div>
             <div className="modern-panel-body modern-funnel">
-              <div className="modern-funnel-row">
-                <div className="modern-funnel-meta"><span>Leads</span><strong>{formatNumber(stats.totalLeads)} · 100%</strong></div>
-                <div className="modern-progress"><span style={{ width: '100%' }} /></div>
-              </div>
-              {stageRows.slice(0, 6).map((stage) => (
+              {stageRows.map((stage) => (
                 <div className="modern-funnel-row" key={stage.id}>
                   <div className="modern-funnel-meta">
                     <span>{stage.name}</span>
-                    <strong>{formatNumber(stage.count)} · {formatPercent(stage.percentage)}</strong>
+                    <strong>{formatNumber(stage.reachedCount)} · {formatPercent(stage.percentage)}</strong>
                   </div>
                   <div className="modern-progress"><span style={{ width: `${clampPercent(stage.percentage)}%` }} /></div>
                 </div>
@@ -561,7 +557,6 @@ const ModernDashboard: React.FC<ModernDashboardProps> = ({
             <table className="modern-table modern-pipeline-table">
               <thead><tr><th>Etapa</th><th>Em etapa</th><th>Alcançaram</th><th>Conversão</th><th>Base</th></tr></thead>
               <tbody>
-                <tr><td>Leads</td><td className="modern-num">{formatNumber(stats.totalLeads)}</td><td className="modern-num">{formatNumber(stats.totalLeads)}</td><td className="modern-num">100%</td><td>Entrada do funil</td></tr>
                 {stageRows.map((stage) => (
                   <tr key={stage.id}><td>{stage.name}</td><td className="modern-num">{formatNumber(stage.count)}</td><td className="modern-num">{formatNumber(stage.reachedCount)}</td><td className="modern-num">{formatPercent(stage.percentage)}</td><td>{stage.percentageBaseLabel}</td></tr>
                 ))}
